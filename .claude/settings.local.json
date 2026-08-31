@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -m pip install --quiet numpy)",
+      "Bash(.venv/Scripts/python.exe scripts/run_gate.py)",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -q)"
+    ]
+  }
+}
