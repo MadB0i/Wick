@@ -116,15 +116,36 @@ def _layer_norm(x: torch.Tensor, w: torch.Tensor, b: torch.Tensor, eps: float) -
     return (x - mu) / torch.sqrt(var + eps) * w + b
 
 
+def _lora_proj(xin: torch.Tensor, A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
+    """Low-rank projection residual: `(xin @ A) @ B`.
+
+    `A: (in, r)`, `B: (r, out)`; result is `(..., out)`, broadcast with the base
+    linear's output on the SAME broadcast dims, so the residual threads straight
+    into the block's graph (and thus into StreamedBlock's recompute).
+    """
+    return (xin @ A) @ B
+
+
 def apply_block(
-    x: torch.Tensor, p: dict[str, torch.Tensor], cfg: BlockConfig
+    x: torch.Tensor,
+    p: dict[str, torch.Tensor],
+    cfg: BlockConfig,
+    lora: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> torch.Tensor:
-    """Pre-norm attention + MLP block. `p` may be host or device weights."""
+    """Pre-norm attention + MLP block. `p` may be host or device weights.
+
+    `lora` optionally injects a LoRA residual into each targeted projection:
+    `{target: (A, B)}` with `A: (in, r)`, `B: (r, out)`. When `lora` is None the
+    computation is bit-identical to the Phase 2 block, which is what keeps the
+    resident/streamed gate apples-to-apples.
+    """
     B, T, D = x.shape
     H, dh = cfg.n_heads, cfg.d_head
 
     h = _layer_norm(x, p["ln1_w"], p["ln1_b"], cfg.ln_eps)
     qkv = h @ p["qkv_w"].transpose(0, 1) + p["qkv_b"]
+    if lora and lora.get("qkv") is not None:
+        qkv = qkv + _lora_proj(h, *lora["qkv"])
     q, k, v = qkv.split(D, dim=-1)
     # (B, T, D) -> (B, H, T, dh)
     q = q.view(B, T, H, dh).transpose(1, 2)
@@ -134,11 +155,20 @@ def apply_block(
     att = (q @ k.transpose(-1, -2)) / math.sqrt(dh)
     att = att.softmax(dim=-1)
     o = (att @ v).transpose(1, 2).reshape(B, T, D)
-    x = x + o @ p["attn_out_w"].transpose(0, 1) + p["attn_out_b"]
+    aout = o @ p["attn_out_w"].transpose(0, 1) + p["attn_out_b"]
+    if lora and lora.get("attn_out") is not None:
+        aout = aout + _lora_proj(o, *lora["attn_out"])
+    x = x + aout
 
     h = _layer_norm(x, p["ln2_w"], p["ln2_b"], cfg.ln_eps)
-    h = F.gelu(h @ p["ff1_w"].transpose(0, 1) + p["ff1_b"])  # exact erf GELU
-    return x + h @ p["ff2_w"].transpose(0, 1) + p["ff2_b"]
+    f1 = h @ p["ff1_w"].transpose(0, 1) + p["ff1_b"]
+    if lora and lora.get("ff1") is not None:
+        f1 = f1 + _lora_proj(h, *lora["ff1"])
+    g = F.gelu(f1)  # exact erf GELU
+    out = g @ p["ff2_w"].transpose(0, 1) + p["ff2_b"]
+    if lora and lora.get("ff2") is not None:
+        out = out + _lora_proj(g, *lora["ff2"])
+    return x + out
 
 
 def resident_stack_forward(

@@ -10,11 +10,14 @@ through BOTH forward and backward pass.
 - Hook-based approach (AirLLM-style) is rejected — retains 12 device allocations
   in graph, produces NaN gradients. Custom autograd.Function is required.
 - 5 injected fault types all caught by the gate (gate can fail = gate is real).
+- Phase 3 gate passes: streamed LoRA training (frozen base + resident adapters)
+  yields bit-identical loss trajectories vs full-resident baseline (fp64, CPU).
 
 ## What is NOT proven yet
 - No real GPU involved — everything is CPU simulation. Actual VRAM behavior unproven.
 - No real VLM modules — toy blocks only, not MiniCPM-V's SigLIP/ViT encoder.
-- Phase 3 (Trainer/LoRA integration) not started.
+- Phase 3 done only in CPU sim: the real trainer (HuggingFace/custom) on real
+  GPU, with fp16/amp, is not started. 1000-step loss-curve gate on real GPU pending.
 - fp16/amp regime not tested — fp64 determinism is a lab condition.
 
 ## Target model
