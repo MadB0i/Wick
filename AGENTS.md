@@ -12,13 +12,21 @@ through BOTH forward and backward pass.
 - 5 injected fault types all caught by the gate (gate can fail = gate is real).
 - Phase 3 gate passes: streamed LoRA training (frozen base + resident adapters)
   yields bit-identical loss trajectories vs full-resident baseline (fp64, CPU).
+- Sub-gate 4A passes on the real GTX 1650: fp16 + GradScaler held a stable scale
+  (final 4e3, init 2^12) across 100 streamed training steps and 4800 real PCIe
+  load/evict cycles with zero overflow/skips. Peak weight residency bounded at
+  1.00 fp16 layers; device empty after; loss 7.3e-4 -> 2.8e-6.
 
 ## What is NOT proven yet
-- No real GPU involved — everything is CPU simulation. Actual VRAM behavior unproven.
-- No real VLM modules — toy blocks only, not MiniCPM-V's SigLIP/ViT encoder.
-- Phase 3 done only in CPU sim: the real trainer (HuggingFace/custom) on real
-  GPU, with fp16/amp, is not started. 1000-step loss-curve gate on real GPU pending.
-- fp16/amp regime not tested — fp64 determinism is a lab condition.
+- No real VLM modules — toy blocks (now real-GPU fp16) only, not MiniCPM-V's
+  SigLIP/ViT encoder.
+- Sub-gate 4B (MiniCPM-V vision-encoder streaming) not started.
+- The real trainer (HuggingFace/custom) wiring the streamed encoder to a resident
+  LLM, with GradScaler end-to-end, is not built. The 1000-step loss-curve gate on
+  real GPU vs full-VRAM baseline is pending.
+- Peak-VRAM-at-realistic-scale not shown at toy size: fixed CUDA/autograd/optimizer
+  overhead dominates the 97.6 KiB toy layer, so only the weight-residency bound is
+  an honest measurement until layers reach realistic MB sizes.
 
 ## Target model
 MiniCPM-V 1.3B. Stream only the vision encoder (~400M params), keep LLM +

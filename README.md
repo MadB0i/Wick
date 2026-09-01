@@ -22,23 +22,32 @@ out of VRAM, one layer at a time — **not just for inference, but for training 
 
 ---
 
-## 🧪 What's Proven (Phase 2 gate — passing)
+## 🧪 What's Proven
 
-- ✅ **Backward-pass streaming is gradient-exact.** `rel_diff_norm = 0.0` vs a
-  fully-resident baseline (bitwise), at fp64 in CPU simulation.
+- ✅ **Phase 2 — backward-pass streaming is gradient-exact.** `rel_diff_norm = 0.0`
+  vs a fully-resident baseline (bitwise), fp64, CPU sim.
 - ✅ **Peak residency = 1 layer.** No device storage leaks into the autograd graph
   (40 saved tensors walked via `data_ptr`, non-vacuous check).
-- ✅ **AirLLM-style hooks rejected with evidence.** Hooks retain 12 device
-  allocations in the graph and produce **NaN gradients** under storage pressure.
-  A custom `torch.autograd.Function` is required — and proven.
-- ✅ **The gate can fail** — 5 injected fault types are all caught.
+- ✅ **AirLLM-style hooks rejected with evidence.** Hooks retain device allocations
+  and produce **NaN gradients** under storage pressure. A custom
+  `torch.autograd.Function` is required — and proven.
+- ✅ **Phase 3 — streamed LoRA training** (frozen base + resident adapters) yields
+  **bit-identical loss trajectories** vs full-resident (fp64, CPU).
+- ✅ **Sub-gate 4A — real GTX 1650, fp16 + GradScaler.** Stable scale (final 4e3,
+  init 2^12), zero overflow across 100 streamed steps / 4800 real PCIe
+  load-evict cycles; peak weight residency 1.00 fp16 layer; loss 7.3e-4 → 2.8e-6.
+- ✅ **The gate can fail** — injected fault types are all caught.
 
 ## 🚧 What's Not Proven Yet
 
-- ⏳ No real GPU — everything is simulated on CPU.
-- ⏳ No real VLM modules — toy blocks only, not MiniCPM-V's SigLIP/ViT encoder.
-- ⏳ Phase 3 (Trainer / LoRA integration) not started.
-- ⏳ fp16 / mixed-precision (GradScaler) regime untested.
+- ⏳ No real VLM modules — toy blocks (real-GPU fp16) only, not MiniCPM-V's
+  SigLIP/ViT encoder.
+- ⏳ Sub-gate 4B (MiniCPM-V vision-encoder streaming) not started.
+- ⏳ The real trainer (streamed encoder → resident LLM, GradScaler end-to-end,
+  1000-step loss-curve gate vs full-VRAM baseline) not built.
+- ⏳ Realistic-scale VRAM: at toy size, fixed CUDA/autograd/optimizer overhead
+  dominates the 97.6 KiB layer, so only the weight-residency bound is honest
+  until layers reach MB scale.
 
 ---
 
@@ -55,17 +64,19 @@ streamed layers live on CPU always.
 
 ## 🛠️ Stack
 
-Python + PyTorch · `torch.autograd.Function` · pure local, no cloud calls.
+Python + PyTorch (`torch.autograd.Function`) · pure local, no cloud calls.
+Real-GPU runs need a CUDA build — for the GTX 1650 (sm_75) that is
+`pip install torch==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124`.
 
 ---
 
 ## 📅 Roadmap
 
 - **Phase 2 ✅** — backward-pass streaming proof (gate passes)
-- **Phase 3 ⏳** — Trainer/LoRA integration; gate = loss curve within 5% of
-  full-VRAM baseline after 1000 steps on real GPU
-- **Phase 4 ⏳** — real MiniCPM-V vision-encoder streaming + fp16/amp regime
-- **Phase 5 ⏳** — docs, benchmarks, demo visualizer
+- **Phase 3 ✅** — LoRA training via streamed backward (CPU sim, exact)
+- **Phase 4A ✅** — real GTX 1650: fp16 + GradScaler stability, 1-layer residency
+- **Phase 4B ⏳** — real MiniCPM-V vision-encoder streaming
+- **Phase 5 ⏳** — trainer wiring (1000-step gate on GPU) + benchmarks + demo
 
 ---
 
@@ -75,6 +86,10 @@ Python + PyTorch · `torch.autograd.Function` · pure local, no cloud calls.
 pip install -e .
 # Phase 2 gate report (exit 0 = pass)
 python scripts/run_gate.py
+# Phase 3 gate report (LoRA via streamed backward, CPU sim)
+python scripts/run_phase3.py
+# Sub-gate 4A report (real GPU: fp16 + GradScaler stability) -- needs CUDA build
+python scripts/run_phase4a.py
 # Full assertion suite
 python -m pytest tests/ -v
 ```

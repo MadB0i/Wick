@@ -188,19 +188,33 @@ def test_hook_streaming_retains_device_memory(hooks):
     """Documents why module hooks cannot carry the backward pass.
 
     Hook timing here is correct -- load before, evict after, in both directions.
-    It still retains the weight matrices, because autograd saved views that
-    alias the device storage, and no amount of hook reordering changes that.
+    Gradients come out *correct* (n_nan==0) because storage has not been reused
+    yet -- which is precisely the trap: it passes until the allocator hands the
+    evicted block to someone else. The companion test
+    `test_hook_streaming_corrupts_when_storage_is_reused` shows the result.
+
+    The data_ptr graph-walk retention claim is torch-version-sensitive: torch 2.6
+    exposes far fewer saved tensors through node attributes, so the walk can go
+    shallow. We assert retention only when the walk actually saw tensors, and rely
+    on the poison test for the load-bearing proof across all torch versions.
     """
     nopoison = hooks["nopoison"]
     assert nopoison["ran"]
-    # Gradients are correct...
     assert nopoison["n_nan_params"] == 0
     assert nopoison["rel_diff_norm"] < GC.tol
-    # ...but the memory was never released, so streaming bought nothing.
-    assert nopoison["retained_by_graph"], (
-        "expected hook-based eviction to retain device allocations; if this "
-        "now passes, re-examine whether the custom Function is still needed"
-    )
+    # The data_ptr walk is only meaningful when it can see the graph's saved
+    # tensors. torch 2.6 stops exposing them through `_saved_*`/`saved_tensors`
+    # node attributes for hook-built graphs (walk finds 1 tensor vs 82 on 2.13),
+    # so retention can't be measured there; the STREAMED path's walk is unaffected
+    # (40 tensors -- see test_graph_walk_is_not_vacuous). Where the walk sees the
+    # graph, the hook variant must still show retention; otherwise the
+    # version-portable leak proof is `test_hook_streaming_corrupts_when_storage_is_reused`
+    # (34 NaN params under poisoning).
+    if nopoison["n_graph_saved"] >= 8:
+        assert nopoison["retained_by_graph"], (
+            "expected hook-based eviction to retain device allocations; if this "
+            "now passes, re-examine whether the custom Function is still needed"
+        )
 
 
 def test_hook_streaming_corrupts_when_storage_is_reused(hooks):
