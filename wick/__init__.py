@@ -7,4 +7,4 @@ adapters trained on top of streamed, frozen base weights -- the MiniCPM-V
 deployment the project targets).
 """
 
-__all__ = ["simdevice", "toy", "streaming", "lora", "gate", "cuda_block"]
+__all__ = ["simdevice", "toy", "streaming", "lora", "gate", "cuda_block", "profiler"]

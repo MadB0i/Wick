@@ -7,7 +7,7 @@ name = "wick"
 version = "0.1.0"
 description = "VLM fine-tuning on low-VRAM consumer GPUs via CPU<->GPU layer streaming through forward and backward pass"
 requires-python = ">=3.12"
-dependencies = ["torch"]
+dependencies = ["torch", "psutil"]
 
 [tool.setuptools]
 packages = ["wick"]

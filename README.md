@@ -90,6 +90,8 @@ python scripts/run_gate.py
 python scripts/run_phase3.py
 # Sub-gate 4A report (real GPU: fp16 + GradScaler stability) -- needs CUDA build
 python scripts/run_phase4a.py
+# Device profiler: which VLMs fit your hardware (no model download)
+python -m wick.profiler
 # Full assertion suite
 python -m pytest tests/ -v
 ```
