@@ -9,6 +9,47 @@ out of VRAM, one layer at a time — **not just for inference, but for training 
 > Inference-side streaming was already solved (AirLLM, oLLM). Wick solves the harder
 > half nobody's cracked yet: **computing gradients through streamed layers.**
 
+**55 tests passing | GTX 1650 4GB | fp16 stable**
+
+---
+
+## 🚀 Quick Demo
+
+```text
+========================================================================
+WICK DEVICE PROFILER
+========================================================================
+Your GPU: NVIDIA GeForce GTX 1650
+  VRAM      4.00 GB (4.00 GB)
+  compute   7.5 (no bf16, fp16)
+  system RAM 15 GB (host masters / optimizer offload)
+
+  Peak-VRAM model (Wick streaming): 1 vision layer fp16 + resident LLM
+  + LoRA fp32 + LoRA optimizer + ~1-layer activation + 10% headroom
+
+  ✅ MiniCPM-V 1.3B     best(fp16)   2.60 GB of 4.00 GB VRAM
+          fp16 needs   2.60 GB, int4 needs   0.82 GB
+  ✅ MiniCPM-V 2.6B     best(int4)   1.69 GB of 4.00 GB VRAM
+          fp16 needs   5.56 GB, int4 needs   1.69 GB
+  ✅ Qwen2-VL 2B        best(int4)   1.35 GB of 4.00 GB VRAM
+          fp16 needs   4.32 GB, int4 needs   1.35 GB
+  ❌ LLaVA-1.5 7B       best(int4)   4.49 GB of 4.00 GB VRAM
+          fp16 needs  14.89 GB, int4 needs   4.49 GB
+  ✅ Phi-3.5 Vision     best(int4)   2.69 GB of 4.00 GB VRAM
+          fp16 needs   8.93 GB, int4 needs   2.69 GB
+
+  ✅ Can fine-tune:
+     - MiniCPM-V 1.3B
+     - MiniCPM-V 2.6B
+     - Qwen2-VL 2B
+     - Phi-3.5 Vision
+  ❌ Cannot fit:
+     - LLaVA-1.5 7B
+========================================================================
+```
+
+Run it yourself with `python -m wick.profiler`.
+
 ---
 
 ## ✨ Why Wick?
@@ -77,6 +118,34 @@ Real-GPU runs need a CUDA build — for the GTX 1650 (sm_75) that is
 - **Phase 4A ✅** — real GTX 1650: fp16 + GradScaler stability, 1-layer residency
 - **Phase 4B ⏳** — real MiniCPM-V vision-encoder streaming
 - **Phase 5 ⏳** — trainer wiring (1000-step gate on GPU) + benchmarks + demo
+
+---
+
+## 📊 Results — Sub-gate 4A (real GTX 1650)
+
+Measured on a real NVIDIA GeForce GTX 1650 (4 GB, sm_75, fp16 only), 100 streamed
+training steps with Adam + GradScaler.
+
+| Metric | Value |
+|---|---|
+| GradScaler final scale | `4e3` (init `2^12` = 4096) |
+| Overflow / skipped steps | `0` |
+| Peak weight residency | `1.00` fp16 layer (97.6 KiB; all-resident would need 195.2 KiB) |
+| Loss trajectory | `7.35e-4` → `2.77e-6` over 100 steps |
+| Real PCIe load / evict cycles | `4800` / `4800` |
+| Device bytes resident after run | `0.00` MiB |
+
+```text
+==============================================================================
+SUB-GATE 4A PASSED --
+  final GradScaler scale 4e+03 (finite, stable, 0 overflow steps)
+  peak weight residency 97.6 KiB = 1.00 fp16 layers (bounded at ~1; all-resident would need 195.2 KiB)
+  loss 7.349e-04 -> 2.775e-06 over 100 steps
+  4800 real PCIe loads, 4800 evicts, device empty at end
+==============================================================================
+```
+
+Run it yourself with `python scripts/run_phase4a.py`.
 
 ---
 
