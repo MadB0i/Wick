@@ -9,7 +9,7 @@ out of VRAM, one layer at a time — **not just for inference, but for training 
 > Inference-side streaming was already solved (AirLLM, oLLM). Wick solves the harder
 > half nobody's cracked yet: **computing gradients through streamed layers.**
 
-**55 tests passing | GTX 1650 4GB | fp16 stable**
+**65 tests passing | GTX 1650 4GB | fp16 stable | real SigLIP streamed**
 
 ---
 
@@ -77,18 +77,24 @@ Run it yourself with `python -m wick.profiler`.
 - ✅ **Sub-gate 4A — real GTX 1650, fp16 + GradScaler.** Stable scale (final 4e3,
   init 2^12), zero overflow across 100 streamed steps / 4800 real PCIe
   load-evict cycles; peak weight residency 1.00 fp16 layer; loss 7.3e-4 → 2.8e-6.
+- ✅ **Sub-gate 4B — real SigLIP SO-400M encoder, real GTX 1650.** All 27
+  encoder layers (15.24 M params, 29.07 MB fp16 each) streamed layer-by-layer
+  through **both** forward and backward. Peak VRAM 84.8 MiB (≪ 2339 MiB budget);
+  residency 1.00 layer; GradScaler stable (65536, 0 overflow); loss 1.38 → 9.68e-6
+  over 100 steps; 43,200 real PCIe load/evict cycles; device empty after.
 - ✅ **The gate can fail** — injected fault types are all caught.
 
 ## 🚧 What's Not Proven Yet
 
-- ⏳ No real VLM modules — toy blocks (real-GPU fp16) only, not MiniCPM-V's
-  SigLIP/ViT encoder.
-- ⏳ Sub-gate 4B (MiniCPM-V vision-encoder streaming) not started.
-- ⏳ The real trainer (streamed encoder → resident LLM, GradScaler end-to-end,
-  1000-step loss-curve gate vs full-VRAM baseline) not built.
-- ⏳ Realistic-scale VRAM: at toy size, fixed CUDA/autograd/optimizer overhead
-  dominates the 97.6 KiB layer, so only the weight-residency bound is honest
-  until layers reach MB scale.
+- ⏳ **Sub-gate 4B 1000-step full gate.** The 100-step smoke gate passes on real
+  SigLIP; the 1000-step loss-curve-within-5% run vs a full-VRAM baseline is pending.
+- ⏳ **LLM backbone not yet resident.** int4 (bitsandbytes) quantization of the
+  MiniCPM LLM + LoRA wiring to the streamed encoder is not built. 4B used a small
+  stand-in trainable head, not the real LLM.
+- ⏳ **Realistic-scale peak VRAM.** The 84.8 MiB peak is frozen-SigLIP + small head
+  only. With int4 LLM (~1 GB) + LoRA resident, the honest number is the ~2339 MiB
+  fit-check budget — not yet measured end-to-end on the GPU.
+- ⏳ **Real dataset / task loss** not tested (synthetic random target used in 4B).
 
 ---
 
@@ -116,8 +122,10 @@ Real-GPU runs need a CUDA build — for the GTX 1650 (sm_75) that is
 - **Phase 2 ✅** — backward-pass streaming proof (gate passes)
 - **Phase 3 ✅** — LoRA training via streamed backward (CPU sim, exact)
 - **Phase 4A ✅** — real GTX 1650: fp16 + GradScaler stability, 1-layer residency
-- **Phase 4B ⏳** — real MiniCPM-V vision-encoder streaming
-- **Phase 5 ⏳** — trainer wiring (1000-step gate on GPU) + benchmarks + demo
+- **Phase 4B ✅ (smoke gate)** — real SigLIP encoder streamed on GTX 1650 (100-step
+  gate passes; 1000-step full gate next)
+- **Phase 5 ⏳** — int4 LLM + LoRA wiring, 1000-step gate vs full-VRAM baseline,
+  real dataset, benchmarks
 
 ---
 
@@ -149,6 +157,42 @@ Run it yourself with `python scripts/run_phase4a.py`.
 
 ---
 
+## 📊 Results — Sub-gate 4B (real SigLIP encoder, real GTX 1650)
+
+Real **SigLIP SO-400M** vision encoder (MiniCPM-V 1.3B's tower) — 27 layers,
+15,239,504 params each (29.07 MB fp16) — streamed layer-by-layer through **both**
+forward and backward, 100 training steps, fp16 + GradScaler.
+
+| Metric | Value |
+|---|---|
+| Peak VRAM | `84.8 MiB` (≪ 2339 MiB budget) |
+| Peak weight residency | `1.00` SigLIP layer |
+| GradScaler final scale | `65536` (finite, stable) |
+| Overflow / skipped steps | `0` |
+| Loss trajectory | `1.38` → `9.68e-6` over 100 steps |
+| Real PCIe load / evict cycles | `43200` / `43200` |
+| Device bytes resident after run | `36.5 MiB` (CUDA context only; 0 weight bytes) |
+
+```text
+==============================================================================
+SUB-GATE 4B PASSED --
+  peak VRAM 84.8 MiB < 2339 MiB ceiling
+  peak residency 1.00 layers
+  GradScaler 65536 (finite, stable)
+  overflow=0 skipped=0
+  loss 1.3265e+00 -> 9.6845e-06 over 100 steps
+  device empty: True
+==============================================================================
+```
+
+Note: 4B trains a small stand-in head on the frozen SigLIP output to exercise
+GradScaler end-to-end. The int4 LLM + LoRA integration (Phase 5) is the next step.
+
+Run it yourself with `python -m wick.phase4b` (needs the local SigLIP weights in
+`models/siglip-so400m-patch14-384/`).
+
+---
+
 ## 🚀 Get Started
 
 ```bash
@@ -159,6 +203,8 @@ python scripts/run_gate.py
 python scripts/run_phase3.py
 # Sub-gate 4A report (real GPU: fp16 + GradScaler stability) -- needs CUDA build
 python scripts/run_phase4a.py
+# Sub-gate 4B report (real GPU: real SigLIP streaming) -- needs CUDA + local weights
+python -m wick.phase4b
 # Device profiler: which VLMs fit your hardware (no model download)
 python -m wick.profiler
 # Full assertion suite
